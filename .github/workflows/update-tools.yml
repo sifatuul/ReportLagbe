@@ -1,0 +1,79 @@
+name: Update Report Lagbe tools
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/**/*.html"
+      - "tools.json"
+      - ".github/workflows/update-tools.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build tools manifest
+        shell: python
+        run: |
+          import json, pathlib, re, subprocess
+
+          root = pathlib.Path(".")
+          items = []
+
+          def classify(s):
+              s = s.lower()
+              if "micro" in s or "metallo" in s: return ("Microscopy", "🔬")
+              if "graph" in s or "plot" in s or "chart" in s: return ("Graphs", "📊")
+              if "pdf" in s or "report" in s or "compile" in s: return ("PDF & Report", "📄")
+              if "image" in s or "collage" in s or "figure" in s: return ("Images & Figures", "🖼️")
+              if "data" in s or "table" in s or "calc" in s: return ("Data & Calculators", "🧮")
+              return ("Other", "🧰")
+
+          for p in sorted((root/"tools").rglob("*.html")):
+              rel = p.as_posix()
+              text = p.read_text(encoding="utf-8", errors="ignore")
+              title = None
+              m = re.search(r"<title[^>]*>(.*?)</title>", text, re.I|re.S)
+              if m:
+                  title = re.sub(r"\s+", " ", re.sub("<[^>]+>", "", m.group(1))).strip()
+              if not title:
+                  title = p.stem.replace("-", " ").replace("_", " ").title()
+
+              category, icon = classify(rel + " " + title)
+              try:
+                  date = subprocess.check_output(
+                      ["git","log","-1","--format=%cI","--",rel],
+                      text=True
+                  ).strip()
+              except Exception:
+                  date = ""
+
+              items.append({
+                  "path": rel,
+                  "title": title,
+                  "category": category,
+                  "icon": icon,
+                  "date": date
+              })
+
+          items.sort(key=lambda x: x["date"], reverse=True)
+          pathlib.Path("tools.json").write_text(
+              json.dumps(items, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8"
+          )
+
+      - name: Commit manifest
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools.json
+          git diff --cached --quiet || git commit -m "chore: update Report Lagbe tools manifest"
+          git push
